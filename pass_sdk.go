@@ -34,13 +34,16 @@ func BindAuthMgr(srvInfo *SrvInfo, bao BizAO, route *goengine.HttpRoute) {
     route.Set(srvInfo.AuthPathname, ret.auth)
 }
 
-func (this *authMgr) auth(res http.ResponseWriter, session *goengine.Session, req *http.Request) {
+func (this *authMgr) auth(res http.ResponseWriter, req *http.Request) {
     var refUri *url.URL
     refUri = nil
     header := res.Header()
     if "GET" == req.Method {
         refUri = chkReferer(req, PASSPORT_ORIGIN)
     }
+    var session *goengine.Session
+    ctx := req.Context()
+    session = ctx.Value("session")
 
     code := 405
     msg := "Method Not Allowed"
@@ -93,11 +96,16 @@ func (this *authMgr) reqAuth(salt string) string {
     return goutils.MD5(this.app + this.secret + salt)
 }
 
-func (this *authMgr) pageFilter(res http.ResponseWriter, session *goengine.Session, req *http.Request) bool {
+func (this *authMgr) pageFilter(res http.ResponseWriter, req *http.Request) bool {
     // 授权接口地址
     if req.URL.Path == this.authAddr {
         return true
     }
+    
+    var session *goengine.Session
+    ctx := req.Context()
+    session = ctx.Value("session")
+
     // 已登录
     userMap := WhoIsUser(session)
     if nil != userMap {
