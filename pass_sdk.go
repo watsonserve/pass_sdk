@@ -4,132 +4,95 @@
 package pass_sdk
 
 import (
-    "fmt"
-    "github.com/watsonserve/goengine"
-    "github.com/watsonserve/goutils"
-    "net/http"
-    "net/url"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+
+	"github.com/watsonserve/goengine"
+	"github.com/watsonserve/goutils"
 )
 
 // 绑定pass_sdk 授权管理器
 //
-// boa: 业务访问对象, 如果bao = nil, 使用默认bao
-func BindAuthMgr(srvInfo *SrvInfo, bao BizAO, route *goengine.HttpRoute) {
-    if nil == bao {
-        bao = &defaultBizAO {
-            db: make(map[string]*UserData),
-        }
-    }
-    ret := &authMgr {
-        userService: userService {
-            bao: bao,
-            app: srvInfo.AppId,
-            secret: srvInfo.Secret,
-        },
-        authAddr: srvInfo.AuthPathname,
-        scheme: srvInfo.Scheme,
-        host: srvInfo.Host,
-    }
-    route.Use(ret.pageFilter)
-    route.Set(srvInfo.AuthPathname, ret.auth)
+// srvInfo.app(aka client_id): came from authorize server
+// bao: 业务访问对象, 如果bao = nil, 使用默认bao
+func BindAuthMgr(srvInfo *SrvInfo, bao BizAO, route *goengine.HttpRoute) error {
+	if nil == bao {
+		return errors.New("bao is required")
+	}
+	am := &authMgr{
+		bao:      bao,
+		app:      srvInfo.AppId,
+		secret:   srvInfo.Secret,
+		authAddr: srvInfo.AuthPathname,
+		scheme:   srvInfo.Scheme,
+		host:     srvInfo.Host,
+	}
+	route.Use(am.pageFilter)
+	route.Set(srvInfo.AuthPathname, am.auth)
+	return nil
 }
 
-func (this *authMgr) auth(res http.ResponseWriter, req *http.Request) {
-    var refUri *url.URL
-    refUri = nil
-    header := res.Header()
-    if "GET" == req.Method {
-        refUri = chkReferer(req, PASSPORT_ORIGIN)
-    }
-    var session *goengine.Session
-    ctx := req.Context()
-    session = ctx.Value("session")
+func (am *authMgr) auth(res http.ResponseWriter, req *http.Request) {
+	// 校验来源
+	if "GET" != req.Method || !chkReferer(req, PASSPORT_ORIGIN) {
+		am.bao.Error(res, req, 405, "Method Not Allowed")
+		return
+	}
 
-    code := 405
-    msg := "Method Not Allowed"
+	query := req.URL.Query()
+	authCode := query.Get("code")
+	rd := query.Get("rd")
+	// state := query.Get("state")
 
-    for nil != refUri {
-        code = 400
-        ticket := req.FormValue("ticket")
-        redirect := req.FormValue("rd")
-        if "" == ticket {
-            msg = "Bad Request"
-            break
-        }
-        // 解析重定向地址
-        redirect, _ = url.QueryUnescape(redirect)
-        // 重定向地址出局
-        if '/' != redirect[0] {
-            msg = "Redirect Out"
-            break
-        }
+	// if goutils.MD5(token+redirect+stamp) != state {
 
-        // 获取用户信息
-        var userData *UserData
-        userData, err := this.getUserInfo(ticket)
-        if nil != err {
-            code = 404
-            msg = err.Error()
-            break
-        }
+	// }
 
-        // 在session中存储user
-        session.Set(SESSION_USER_KEY, userData)
-        err = session.Save(0)
-        if nil != err {
-            code = 503
-            msg = err.Error()
-            break
-        }
+	redirect := getAuthAddr(am.scheme, am.host, am.authAddr, rd)
+	tokenResp, err := loadToken(am.app, am.secret, authCode, redirect)
+	if nil != err {
+		am.bao.Error(res, req, 400, err.Error())
+		return
+	}
 
-        header.Set("Location", redirect)
-        res.WriteHeader(302)
-        return
-    }
-    this.bao.Error(res, code, msg)
+	am.bao.Scope(res, req, tokenResp)
 }
 
-/**
- * 请求授权信息
- */
-func (this *authMgr) reqAuth(salt string) string {
-    return goutils.MD5(this.app + this.secret + salt)
+func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) string {
+	// 随机字符串
+	salt := goutils.RandomString(16)
+	token := goutils.MD5(am.app + salt + am.secret)
+	stamp := fmt.Sprintf("%d", goutils.Now())
+	// passport成功后回跳地址
+	redirect := getAuthAddr(am.scheme, am.host, am.authAddr, cutUri(uri))
+	// 组织参数
+	passParams := url.Values{}
+	passParams.Set("response_type", "code")
+	passParams.Set("client_id", am.app)
+	passParams.Set("redirect_uri", redirect)
+	passParams.Set("scope", scope)
+	// auth server return this msg without any changed.
+	passParams.Set("state", goutils.MD5(token+redirect+stamp))
+	// jump
+	return fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode())
 }
 
-func (this *authMgr) pageFilter(res http.ResponseWriter, req *http.Request) bool {
-    // 授权接口地址
-    if req.URL.Path == this.authAddr {
-        return true
-    }
-    
-    var session *goengine.Session
-    ctx := req.Context()
-    session = ctx.Value("session")
+func (am *authMgr) pageFilter(res http.ResponseWriter, req *http.Request) bool {
+	// 授权接口地址
+	if req.URL.Path == am.authAddr {
+		return true
+	}
 
-    // 已登录
-    userMap := WhoIsUser(session)
-    if nil != userMap {
-        return true
-    }
-    // 未登录
-    header := res.Header()
-    // 随机字符串
-    salt := goutils.RandomString(16)
-    token := this.reqAuth(salt)
-    stamp := fmt.Sprintf("%d", goutils.Now())
-    // passport成功后回跳地址
-    redirect := getAuthAddr(this.scheme, this.host, this.authAddr, req.URL)
-    // 组织参数
-    app := this.app
-    passParams := url.Values{}
-    passParams.Set("app", app)
-    passParams.Set("token", token)
-    passParams.Set("redirect", redirect)
-    passParams.Set("salt", salt)
-    passParams.Set("stamp", stamp)
-    passParams.Set("signal", goutils.MD5(app + token + salt + redirect + stamp))
-    // 跳转
-    header.Set("Location", fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode()))
-    res.WriteHeader(302)
-    return false
+	// 已登录
+	if nil != am.bao.Get(res, req) {
+		return true
+	}
+
+	// 未登录
+	res.Header().Set("Location", am.GetPassportUrl(req.URL, "user_info"))
+	// jump
+	res.WriteHeader(302)
+	return false
 }
