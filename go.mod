@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/watsonserve/goengine v0.1.2
-	github.com/watsonserve/goutils v0.1.9
+	github.com/watsonserve/goutils v0.1.10
 )
 
 require (

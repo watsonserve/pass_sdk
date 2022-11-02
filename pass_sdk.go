@@ -74,7 +74,7 @@ func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) string {
 	passParams.Set("redirect_uri", redirect)
 	passParams.Set("scope", scope)
 	// auth server return this msg without any changed.
-	passParams.Set("state", goutils.MD5(token+redirect+stamp))
+	passParams.Set("state", goutils.SHA1(token+redirect+stamp))
 	// jump
 	return fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode())
 }
