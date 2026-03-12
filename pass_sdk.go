@@ -4,6 +4,10 @@
 package pass_sdk
 
 import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base32"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,77 +26,145 @@ func BindAuthMgr(srvInfo *SrvInfo, bao BizAO, route *goengine.HttpRoute) error {
 		return errors.New("bao is required")
 	}
 	am := &authMgr{
-		bao:      bao,
-		app:      srvInfo.AppId,
-		secret:   srvInfo.Secret,
-		authAddr: srvInfo.AuthPathname,
-		scheme:   srvInfo.Scheme,
-		host:     srvInfo.Host,
+		SrvInfo: *srvInfo,
+		bao:     bao,
 	}
 	route.Use(am.pageFilter)
 	route.Set(srvInfo.AuthPathname, am.auth)
 	return nil
 }
 
+/**
+ * @param {string} authAddr 授权路径，例如：/auth
+ * @param {*url.URL} raw 当前路径，将被转换为：%2Fpathname%3Fsearch%23hash
+ * @return string /auth?r=%2Fpathname%3Fsearch%23hash
+ */
+func (am *authMgr) getAuthAddr(salt, stamp, scope, rd string) string {
+	redirect := url.URL{
+		Scheme: am.Scheme,
+		Host:   am.Host,
+		Path:   am.AuthPathname,
+	}
+	q := redirect.Query()
+	if "" != rd {
+		q.Set("s", salt)
+		q.Set("t", stamp)
+		q.Set("c", scope)
+		q.Set("rd", rd)
+		redirect.RawQuery = q.Encode()
+	}
+	return redirect.String()
+}
+
 func (am *authMgr) auth(res http.ResponseWriter, req *http.Request) {
 	// 校验来源
 	if "GET" != req.Method || !chkReferer(req, PASSPORT_ORIGIN) {
-		am.bao.Error(res, req, 405, "Method Not Allowed")
+		am.bao.Error(res, req, http.StatusMethodNotAllowed, "")
 		return
 	}
 
 	query := req.URL.Query()
 	authCode := query.Get("code")
+	state := query.Get("state")
 	rd := query.Get("rd")
-	// state := query.Get("state")
-
-	// if goutils.MD5(token+redirect+stamp) != state {
-
-	// }
-
-	redirect := getAuthAddr(am.scheme, am.host, am.authAddr, rd)
-	tokenResp, err := loadToken(am.app, am.secret, authCode, redirect)
-	if nil != err {
-		am.bao.Error(res, req, 400, err.Error())
+	s := query.Get("s")
+	t := query.Get("t")
+	if "user_info" != query.Get("c") {
+		am.bao.Error(res, req, http.StatusBadRequest, "Scope Not Allowed")
 		return
 	}
 
-	am.bao.Scope(res, req, tokenResp)
+	// check state
+	if stat, err := am.genState(s + t + "user_info" + rd); nil != err || stat != state {
+		msg := ""
+		if nil != err {
+			msg = err.Error()
+		}
+		am.bao.Error(res, req, http.StatusBadRequest, msg)
+		return
+	}
+
+	req.URL.Scheme = am.Scheme
+	req.URL.Host = am.Host
+	strJson, err := LoadByCode(am.AppId, am.Secret, authCode, "user-info")
+	if nil != err {
+		am.bao.Error(res, req, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	usr := &UserData{}
+	err = json.Unmarshal(strJson, usr)
+	if nil != err {
+		am.bao.Error(res, req, http.StatusBadRequest, err.Error())
+		return
+	}
+	am.bao.User(res, req, usr, rd)
 }
 
-func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) string {
+func (am *authMgr) genState(txt string) (string, error) {
+	key, err := base32.StdEncoding.DecodeString(am.Secret)
+	if nil != err {
+		return "", err
+	}
+
+	encoder := hmac.New(sha1.New, key)
+	_, err = encoder.Write([]byte(txt))
+	if nil != err {
+		return "", err
+	}
+
+	hash := encoder.Sum(nil)
+	// get offset
+	offset := int(hash[len(hash)-1] & 0xf)
+	n := (uint(hash[offset]&0x7f) << 24) | (uint(hash[offset+1]) << 16) | (uint(hash[offset+2]) << 8) | (uint(hash[offset+3]&0xff) << 0)
+
+	format := fmt.Sprintf("%%0%dd", 16)
+	code := fmt.Sprintf(format, n)
+	rawLen := len(code)
+	if 16 < rawLen {
+		code = code[rawLen-16:]
+	}
+	return code, nil
+}
+
+func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) (string, error) {
 	// 随机字符串
 	salt := goutils.RandomString(16)
-	token := goutils.MD5(am.app + salt + am.secret)
 	stamp := fmt.Sprintf("%d", goutils.Now())
+	state, err := am.genState(salt + stamp + scope + cutUri(uri))
+	if nil != err {
+		return "", err
+	}
+
 	// passport成功后回跳地址
-	redirect := getAuthAddr(am.scheme, am.host, am.authAddr, cutUri(uri))
+	redirect := am.getAuthAddr(salt, stamp, scope, cutUri(uri))
 	// 组织参数
-	passParams := url.Values{}
-	passParams.Set("response_type", "code")
-	passParams.Set("client_id", am.app)
-	passParams.Set("redirect_uri", redirect)
-	passParams.Set("scope", scope)
-	// auth server return this msg without any changed.
-	passParams.Set("state", goutils.SHA1(token+redirect+stamp))
+	passParams := url.Values{
+		"response_type": []string{"code"},
+		"client_id":     []string{am.AppId},
+		"redirect_uri":  []string{redirect},
+		"scope":         []string{scope},
+		// auth server return this msg without any changed.
+		"state": []string{state},
+	}
+
 	// jump
-	return fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode())
+	return fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode()), nil
 }
 
-func (am *authMgr) pageFilter(res http.ResponseWriter, req *http.Request) bool {
-	// 授权接口地址
-	if req.URL.Path == am.authAddr {
-		return true
+func (am *authMgr) pageFilter(rsp http.ResponseWriter, req *http.Request) bool {
+	// 授权接口地址 || 已登录
+	pass := req.URL.Path == am.AuthPathname || am.bao.IsCheckedIn(rsp, req)
+
+	// 未登录 jump
+	if !pass {
+		u, err := am.GetPassportUrl(req.URL, "user_info")
+		if nil != err {
+			am.bao.Error(rsp, req, http.StatusForbidden, "")
+			return false
+		}
+		am.bao.Error(rsp, req, http.StatusForbidden, u)
 	}
 
-	// 已登录
-	if nil != am.bao.Get(res, req) {
-		return true
-	}
-
-	// 未登录
-	res.Header().Set("Location", am.GetPassportUrl(req.URL, "user_info"))
-	// jump
-	res.WriteHeader(302)
-	return false
+	return pass
 }
