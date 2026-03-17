@@ -2,11 +2,14 @@ package pass_sdk
 
 import (
 	"bytes"
+	"crypto/sha512"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/watsonserve/otp"
 )
 
 func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte, error) {
@@ -17,7 +20,11 @@ func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte,
 	}
 
 	req.Header.Set("Content-Type", ct)
-	req.SetBasicAuth(app, secret)
+	code, err := otp.GenTotp(sha512.New, secret)
+	if nil != err {
+		return nil, err
+	}
+	req.SetBasicAuth(app, code)
 	cli := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:       10,

@@ -7,6 +7,7 @@ toolchain go1.23.4
 require (
 	github.com/watsonserve/goengine v0.1.15
 	github.com/watsonserve/goutils v0.1.22
+	github.com/watsonserve/otp v0.0.2
 )
 
 require (
