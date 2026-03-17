@@ -17,7 +17,7 @@ type SrvInfo struct {
 }
 
 type UserData struct {
-	OpenId string `json:"openId"`
+	OpenId string `json:"open_id"`
 	Name   string `json:"name"`
 	Avatar string `json:"avatar"`
 }
