@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -160,6 +161,7 @@ func (am *authMgr) pageFilter(rsp http.ResponseWriter, req *http.Request) bool {
 	if !pass {
 		u, err := am.GetPassportUrl(req.URL, "user_info")
 		if nil != err {
+			log.Println(err.Error())
 			am.bao.Error(rsp, req, http.StatusForbidden, "")
 			return false
 		}
