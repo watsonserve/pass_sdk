@@ -3,6 +3,7 @@ package pass_sdk
 import (
 	"bytes"
 	"crypto/sha512"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,9 @@ func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte,
 			MaxIdleConns:       10,
 			IdleConnTimeout:    30 * time.Second,
 			DisableCompression: true,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
 		},
 	}
 	var resp *http.Response
