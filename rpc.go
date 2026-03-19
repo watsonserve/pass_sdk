@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha512"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +44,18 @@ func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte,
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	strBody, err := io.ReadAll(resp.Body)
+	jsonBody := &stdJsonResp{}
+	if err == nil {
+		err = json.Unmarshal(strBody, jsonBody)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !jsonBody.Status {
+		return nil, errors.New(jsonBody.Msg)
+	}
+	return json.Marshal(jsonBody.Data)
 }
 
 func LoadByCode(clientId, secret, code, scope string) ([]byte, error) {

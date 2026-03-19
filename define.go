@@ -33,6 +33,12 @@ type authMgr struct {
 	bao BizAO
 }
 
+type stdJsonResp struct {
+	Status bool        `json:"status"`
+	Msg    string      `json:"msg"`
+	Data   interface{} `json:"data"`
+}
+
 // type Token_t struct {
 // 	TokenType    string `json:"token_type"`
 // 	ExpiresIn    int    `json:"expires_in"`
