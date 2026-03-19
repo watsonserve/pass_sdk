@@ -128,17 +128,17 @@ func (am *authMgr) genState(txt string) (string, error) {
 	return code, nil
 }
 
-func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) (string, error) {
+func (am *authMgr) GetPassportUrl(strUri, scope string) (string, error) {
 	// 随机字符串
 	salt := goutils.RandomString(16)
 	stamp := fmt.Sprintf("%d", goutils.Now())
-	state, err := am.genState(salt + stamp + scope + cutUri(uri))
+	state, err := am.genState(salt + stamp + scope + strUri)
 	if nil != err {
 		return "", err
 	}
 
 	// passport成功后回跳地址
-	redirect := am.getAuthAddr(salt, stamp, scope, cutUri(uri))
+	redirect := am.getAuthAddr(salt, stamp, scope, strUri)
 	// 组织参数
 	passParams := url.Values{
 		"response_type": []string{"code"},
@@ -153,13 +153,20 @@ func (am *authMgr) GetPassportUrl(uri *url.URL, scope string) (string, error) {
 	return fmt.Sprintf("%s/?%s", PASSPORT_ORIGIN, passParams.Encode()), nil
 }
 
+func getReferer(req *http.Request) *url.URL {
+	if uri, err := url.Parse(req.Header.Get("Referer")); nil == err {
+		return uri
+	}
+	return req.URL
+}
+
 func (am *authMgr) pageFilter(rsp http.ResponseWriter, req *http.Request) bool {
 	// 授权接口地址 || 已登录
 	pass := req.URL.Path == am.AuthPathname || am.bao.IsCheckedIn(rsp, req)
 
 	// 未登录 jump
 	if !pass {
-		u, err := am.GetPassportUrl(req.URL, "user_info")
+		u, err := am.GetPassportUrl(cutUri(getReferer(req)), "user_info")
 		if nil != err {
 			log.Println(err.Error())
 			am.bao.Error(rsp, req, http.StatusForbidden, "")
