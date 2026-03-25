@@ -9,11 +9,12 @@ const (
 )
 
 type SrvInfo struct {
-	AuthPathname string
-	AppId        string
-	Scheme       string
-	Host         string
-	Secret       string
+	WebAuthPathname string
+	CliAuthPathname string
+	AppId           string
+	Scheme          string
+	Host            string
+	Secret          string
 }
 
 type UserData struct {

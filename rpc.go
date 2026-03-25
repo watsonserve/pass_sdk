@@ -15,14 +15,24 @@ import (
 	"github.com/watsonserve/otp"
 )
 
-func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte, error) {
+func passportRPC(app, secret, scope, method, ct string, cookies []*http.Cookie, reqBody []byte) ([]byte, error) {
 	_url := fmt.Sprintf("%s/api/%s.json", PASSPORT_ORIGIN, strings.ReplaceAll(scope, "_", "-"))
-	req, err := http.NewRequest(method, _url, bytes.NewBuffer(reqBody))
+	var reqBuf *bytes.Buffer = nil
+	if nil != reqBody {
+		reqBuf = bytes.NewBuffer(reqBody)
+	}
+	req, err := http.NewRequest(method, _url, reqBuf)
 	if nil != err {
 		return nil, err
 	}
-
-	req.Header.Set("Content-Type", ct)
+	if "" != ct {
+		req.Header.Set("Content-Type", ct)
+	}
+	if nil != cookies && 0 < len(cookies) {
+		for _, ck := range cookies {
+			req.AddCookie(ck)
+		}
+	}
 	code, err := otp.GenTotp(sha512.New, secret)
 	if nil != err {
 		return nil, err
@@ -60,10 +70,14 @@ func passportRPC(app, secret, scope, method, ct string, reqBody []byte) ([]byte,
 
 func LoadByCode(clientId, secret, code, scope string) ([]byte, error) {
 	reqBody := fmt.Sprintf("grant_type=authorization_code&client_id=%s&code=%s", clientId, code)
-	return passportRPC(clientId, secret, scope, "POST", "application/x-www-form-urlencoded", []byte(reqBody))
+	return passportRPC(clientId, secret, scope, http.MethodPost, "application/x-www-form-urlencoded", nil, []byte(reqBody))
 }
 
 func LoadByToken(clientId, secret, token, scope string) ([]byte, error) {
 	reqBody := fmt.Sprintf("grant_type=access_token&client_id=%s&access_token=%s", clientId, token)
-	return passportRPC(clientId, secret, scope, "POST", "application/x-www-form-urlencoded", []byte(reqBody))
+	return passportRPC(clientId, secret, scope, http.MethodPost, "application/x-www-form-urlencoded", nil, []byte(reqBody))
+}
+
+func LoadByCookie(clientId, secret string, cookies []*http.Cookie) ([]byte, error) {
+	return passportRPC(clientId, secret, "open-user", http.MethodGet, "", cookies, nil)
 }

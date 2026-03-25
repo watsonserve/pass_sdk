@@ -67,11 +67,11 @@ func ExampleBindAuthMgr() {
 	}
 	router := goengine.InitHttpRoute()
 	err := pass_sdk.BindAuthMgr(&pass_sdk.SrvInfo{
-		AppId:        "appId",
-		Secret:       "secret",
-		AuthPathname: "/auth",
-		Scheme:       "https",
-		Host:         "localhost",
+		AppId:           "appId",
+		Secret:          "secret",
+		WebAuthPathname: "/auth",
+		Scheme:          "https",
+		Host:            "localhost",
 	}, b, router)
 	if nil != err {
 		panic(err)

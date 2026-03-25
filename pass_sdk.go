@@ -31,7 +31,12 @@ func BindAuthMgr(srvInfo *SrvInfo, bao BizAO, route *goengine.HttpRoute) error {
 		bao:     bao,
 	}
 	route.Use(am.pageFilter)
-	route.Set(srvInfo.AuthPathname, am.auth)
+	if "" != srvInfo.WebAuthPathname {
+		route.Set(srvInfo.WebAuthPathname, am.webAuth)
+	}
+	if "" != srvInfo.CliAuthPathname {
+		route.Set(srvInfo.CliAuthPathname, am.cliAuth)
+	}
 	return nil
 }
 
@@ -44,7 +49,7 @@ func (am *authMgr) getAuthAddr(salt, stamp, scope, rd string) string {
 	redirect := url.URL{
 		Scheme: am.Scheme,
 		Host:   am.Host,
-		Path:   am.AuthPathname,
+		Path:   am.WebAuthPathname,
 	}
 	q := redirect.Query()
 	if "" != rd {
@@ -57,7 +62,7 @@ func (am *authMgr) getAuthAddr(salt, stamp, scope, rd string) string {
 	return redirect.String()
 }
 
-func (am *authMgr) auth(res http.ResponseWriter, req *http.Request) {
+func (am *authMgr) webAuth(res http.ResponseWriter, req *http.Request) {
 	// 校验来源
 	if "GET" != req.Method || !chkReferer(req, PASSPORT_ORIGIN) {
 		am.bao.Error(res, req, http.StatusMethodNotAllowed, "")
@@ -128,7 +133,7 @@ func (am *authMgr) genState(txt string) (string, error) {
 	return code, nil
 }
 
-func (am *authMgr) GetPassportUrl(strUri, scope string) (string, error) {
+func (am *authMgr) getPassportUrl(strUri, scope string) (string, error) {
 	// 随机字符串
 	salt := goutils.RandomString(16)
 	stamp := fmt.Sprintf("%d", goutils.Now())
@@ -160,13 +165,29 @@ func getReferer(req *http.Request) *url.URL {
 	return req.URL
 }
 
+func (am *authMgr) cliAuth(rsp http.ResponseWriter, req *http.Request) {
+	buf, err := LoadByCookie(am.AppId, am.Secret, req.Cookies())
+	if nil != err {
+		am.bao.Error(rsp, req, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	userData := &UserData{}
+	err = json.Unmarshal(buf, userData)
+	if nil != err {
+		am.bao.Error(rsp, req, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	am.bao.User(rsp, req, userData, "")
+}
+
 func (am *authMgr) pageFilter(rsp http.ResponseWriter, req *http.Request) bool {
 	// 授权接口地址 || 已登录
-	pass := req.URL.Path == am.AuthPathname || am.bao.IsCheckedIn(rsp, req)
+	pass := req.URL.Path == am.WebAuthPathname || req.URL.Path == am.CliAuthPathname || am.bao.IsCheckedIn(rsp, req)
 
 	// 未登录 jump
 	if !pass {
-		u, err := am.GetPassportUrl(cutUri(getReferer(req)), "user_info")
+		u, err := am.getPassportUrl(cutUri(getReferer(req)), "user_info")
 		if nil != err {
 			log.Println(err.Error())
 			am.bao.Error(rsp, req, http.StatusForbidden, "")
